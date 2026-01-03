@@ -98,18 +98,30 @@ void HeaterUart::loop() {
                 if (frame_[45] == END_OF_FRAME_MARKER && frame_[RX_FRAME_START_INDEX] == 0x76) {
                     // 1. Calculate CRC for the Heater's Response (Rx Packet)
                     // Rx packet starts at index 24. We check the first 22 bytes.
-                    uint16_t calc_crc = calculate_crc16(&frame_[24], 22);
+                    uint16_t rx_calc_crc = calculate_crc16(&frame_[24], 22);
 
                     // 2. Extract the received CRC (Last 2 bytes of the packet)
                     // Rx CRC is at indices 46 (MSB) and 47 (LSB)
-                    uint16_t recv_crc = (frame_[46] << 8) | frame_[47];
+                    uint16_t rx_recv_crc = (frame_[46] << 8) | frame_[47];
 
                     // 3. Verify
-                    if (calc_crc == recv_crc) {
-                        parse_frame(frame_, FRAME_SIZE);
+                    if (rx_calc_crc == rx_recv_crc) {
+                        // Check Controller Request CRC (Bytes 0-21, CRC at 22-23)
+                        uint16_t tx_calc_crc = calculate_crc16(&frame_[0], 22);
+                        uint16_t tx_recv_crc = (frame_[22] << 8) | frame_[23];
+
+                        bool tx_valid = (tx_calc_crc == tx_recv_crc);
+                        // If Tx CRC fails, we log it, but we still parse the Heater (Rx) data
+                        // because that is the most important part (Temp, Voltage, Error).
+                        if (!tx_valid) {
+                            ESP_LOGW(TAG, "Tx CRC Mismatch (Controller Data)! Calc: 0x%04X, Recv: 0x%04X", tx_calc_crc, tx_recv_crc);
+                        }
+
+                        // Pass both frame and validity flag to parser
+                        parse_frame(frame_, FRAME_SIZE, tx_valid);
                     } else {
                         crc_error_count_value_++;
-                        ESP_LOGW(TAG, "CRC Mismatch! Calc: 0x%04X, Recv: 0x%04X", calc_crc, recv_crc);
+                        ESP_LOGW(TAG, "Rx CRC Mismatch (Heater Data)! Calc: 0x%04X, Recv: 0x%04X", rx_calc_crc, rx_recv_crc);
                     }
 
                 } else {
@@ -181,7 +193,7 @@ void HeaterUart::update() {
     }
 }
 
-void HeaterUart::parse_frame(const uint8_t *frame, size_t length) {
+void HeaterUart::parse_frame(const uint8_t *frame, size_t length, bool tx_valid) {
     if (length != 48) {
         ESP_LOGW(TAG, "Invalid frame length: %d bytes (expected 48)", length);
         return;
@@ -190,22 +202,26 @@ void HeaterUart::parse_frame(const uint8_t *frame, size_t length) {
     const uint8_t *command_frame = &frame[0];
     const uint8_t *response_frame = &frame[24];
 
-    current_temperature_value_ = command_frame[3];
-    desired_temperature_value_ = command_frame[4];
-    pump_min_limit_value_ = command_frame[5] * 0.1f;
-    pump_max_limit_value_ = command_frame[6] * 0.1f;
-    fan_min_limit_value_ = (command_frame[7] << 8) | command_frame[8];
-    fan_max_limit_value_ = (command_frame[9] << 8) | command_frame[10];
-    altitude_value_ = (command_frame[20] << 8) | command_frame[21];
+    if (tx_valid) {
+        current_temperature_value_ = command_frame[3];
+        desired_temperature_value_ = command_frame[4];
+        pump_min_limit_value_ = command_frame[5] * 0.1f;
+        pump_max_limit_value_ = command_frame[6] * 0.1f;
+        fan_min_limit_value_ = (command_frame[7] << 8) | command_frame[8];
+        fan_max_limit_value_ = (command_frame[9] << 8) | command_frame[10];
+        altitude_value_ = (command_frame[20] << 8) | command_frame[21];
 
-    if (command_frame[13] == 0x32) {
-        operation_mode_description_ = "Thermostat";
-    } else if (command_frame[13] == 0xCD) {
-        operation_mode_description_ = "Fixed Hz";
-    } else {
-        operation_mode_description_ = "Unknown";
+        if (command_frame[13] == 0x32) {
+            operation_mode_description_ = "Thermostat";
+        } else if (command_frame[13] == 0xCD) {
+            operation_mode_description_ = "Fixed Hz";
+        } else {
+            operation_mode_description_ = "Unknown";
+        }
     }
 
+    // --- Heater Data (Checked by Rx CRC) ---
+    // These are safe to read because we checked Rx CRC in loop()
     fan_speed_value_ = (response_frame[6] << 8) | response_frame[7];
     supply_voltage_value_ = ((response_frame[4] << 8) | response_frame[5]) * 0.1;
     heat_exchanger_temp_value_ = ((response_frame[10] << 8) | response_frame[11]);

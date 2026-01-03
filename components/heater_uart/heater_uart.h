@@ -61,7 +61,7 @@ class HeaterUart : public PollingComponent, public uart::UARTDevice {
   std::string run_state_description_ = "Unknown";
   std::string error_code_description_ = "Unknown";
 
-  void parse_frame(const uint8_t *frame, size_t length);
+  void parse_frame(const uint8_t *frame, size_t length, bool tx_valid);
   void reset_frame();
 
   // Mappings for error and run states
