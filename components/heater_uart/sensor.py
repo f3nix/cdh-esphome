@@ -13,6 +13,7 @@ from esphome.const import (
     ICON_FLASH,
     ICON_FAN,
     ICON_EMPTY,
+    ENTITY_CATEGORY_DIAGNOSTIC,
 )
 
 from . import heater_uart_ns, HeaterUart
@@ -30,7 +31,10 @@ SENSORS = {
     "pump_frequency": ("Pump Frequency", UNIT_HERTZ, ICON_EMPTY),
     "fan_voltage": ("Fan Voltage", UNIT_VOLT, ICON_FLASH),
     "desired_temperature": ("Desired Temperature", UNIT_CELSIUS, ICON_THERMOMETER),
+    "crc_errors": ("CRC Errors", UNIT_EMPTY, "mdi:alert-circle-outline"),
 }
+
+DIAGNOSTIC_SENSORS = ["crc_errors"]
 
 CONFIG_SCHEMA = cv.Schema(
     {

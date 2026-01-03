@@ -49,6 +49,7 @@ class HeaterUart : public PollingComponent, public uart::UARTDevice {
   int error_code_value_ = 0;
   int run_state_value_ = 0;
   bool on_off_value_ = false;
+  int crc_error_count_value_ = 0;
 
   std::string run_state_description_ = "Unknown";
   std::string error_code_description_ = "Unknown";
