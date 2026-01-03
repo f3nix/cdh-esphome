@@ -34,9 +34,22 @@ SENSORS = {
     "fan_voltage": ("Fan Voltage", UNIT_VOLT, ICON_FLASH),
     "desired_temperature": ("Desired Temperature", UNIT_CELSIUS, ICON_THERMOMETER),
     "crc_errors": ("CRC Errors", UNIT_EMPTY, "mdi:alert-circle-outline"),
+    "pump_min_limit": ("Pump Min Limit", UNIT_HERTZ, ICON_EMPTY),
+    "pump_max_limit": ("Pump Max Limit", UNIT_HERTZ, ICON_EMPTY),
+    "fan_min_limit": ("Fan Min Limit", UNIT_REVOLUTIONS_PER_MINUTE, ICON_FAN),
+    "fan_max_limit": ("Fan Max Limit", UNIT_REVOLUTIONS_PER_MINUTE, ICON_FAN),
+    "altitude": ("Altitude", "m", "mdi:image-filter-hdr"),
+    "target_frequency": ("Target Frequency", UNIT_HERTZ, ICON_EMPTY),
 }
 
-DIAGNOSTIC_SENSORS = ["crc_errors"]
+DIAGNOSTIC_SENSORS = [
+    "crc_errors",
+    "pump_min_limit",
+    "pump_max_limit",
+    "fan_min_limit",
+    "fan_max_limit",
+    "altitude"
+]
 
 # CONFIG_SCHEMA = cv.Schema(
 #     {
@@ -59,7 +72,7 @@ schema_dict = {
 for sensor_key, (name, unit, icon) in SENSORS.items():
     # Start with required args (or args with safe defaults)
     kwargs = {
-        "accuracy_decimals": 0 if sensor_key in ["crc_errors"] else 1
+        "accuracy_decimals": 0 if sensor_key in ["crc_errors", "fan_speed", "fan_min_limit", "fan_max_limit", "altitude"] else 1
     }
 
     # Only add optional args if they are NOT None

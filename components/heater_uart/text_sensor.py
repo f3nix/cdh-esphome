@@ -10,6 +10,7 @@ DEPENDENCIES = ["heater_uart"]
 TEXT_SENSORS = {
     "run_state": ("Run State", ICON_EMPTY),
     "error_code": ("Error Code", ICON_EMPTY),
+    "operation_mode": ("Operation Mode", "mdi:cog"),
 }
 
 CONFIG_SCHEMA = cv.Schema(

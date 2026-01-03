@@ -146,6 +146,18 @@ void HeaterUart::update() {
             sensor->publish_state(desired_temperature_value_);
         else if (key == "crc_errors")
             sensor->publish_state(crc_error_count_value_);
+        else if (key == "pump_min_limit")
+            sensor->publish_state(pump_min_limit_value_);
+        else if (key == "pump_max_limit")
+            sensor->publish_state(pump_max_limit_value_);
+        else if (key == "fan_min_limit")
+            sensor->publish_state(fan_min_limit_value_);
+        else if (key == "fan_max_limit")
+            sensor->publish_state(fan_max_limit_value_);
+        else if (key == "altitude")
+            sensor->publish_state(altitude_value_);
+        else if (key == "target_frequency")
+            sensor->publish_state(target_frequency_value_);
     }
 
     for (const auto &text_entry : text_sensors_) {
@@ -156,6 +168,8 @@ void HeaterUart::update() {
             text_sensor->publish_state(run_state_description_);
         else if (key == "error_code")
             text_sensor->publish_state(error_code_description_);
+        else if (key == "operation_mode")
+            text_sensor->publish_state(operation_mode_description_);
     }
 
     for (const auto &binary_entry : binary_sensors_) {
@@ -178,12 +192,27 @@ void HeaterUart::parse_frame(const uint8_t *frame, size_t length) {
 
     current_temperature_value_ = command_frame[3];
     desired_temperature_value_ = command_frame[4];
+    pump_min_limit_value_ = command_frame[5] * 0.1f;
+    pump_max_limit_value_ = command_frame[6] * 0.1f;
+    fan_min_limit_value_ = (command_frame[7] << 8) | command_frame[8];
+    fan_max_limit_value_ = (command_frame[9] << 8) | command_frame[10];
+    altitude_value_ = (command_frame[20] << 8) | command_frame[21];
+
+    if (command_frame[13] == 0x32) {
+        operation_mode_description_ = "Thermostat";
+    } else if (command_frame[13] == 0xCD) {
+        operation_mode_description_ = "Fixed Hz";
+    } else {
+        operation_mode_description_ = "Unknown";
+    }
+
     fan_speed_value_ = (response_frame[6] << 8) | response_frame[7];
     supply_voltage_value_ = ((response_frame[4] << 8) | response_frame[5]) * 0.1;
     heat_exchanger_temp_value_ = ((response_frame[10] << 8) | response_frame[11]);
     glow_plug_voltage_value_ = ((response_frame[12] << 8) | response_frame[13]) * 0.1;
     glow_plug_current_value_ = ((response_frame[14] << 8) | response_frame[15]) * 0.01;
     pump_frequency_value_ = response_frame[16] * 0.1;
+    target_frequency_value_ = response_frame[19] * 0.1;
     fan_voltage_value_ = ((response_frame[8] << 8) | response_frame[9]) * 0.1;
     run_state_value_ = response_frame[2];
     on_off_value_ = response_frame[3] == 1;

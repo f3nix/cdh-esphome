@@ -50,7 +50,14 @@ class HeaterUart : public PollingComponent, public uart::UARTDevice {
   int run_state_value_ = 0;
   bool on_off_value_ = false;
   int crc_error_count_value_ = 0;
+  float pump_min_limit_value_ = 0;
+  float pump_max_limit_value_ = 0;
+  int fan_min_limit_value_ = 0;
+  int fan_max_limit_value_ = 0;
+  int altitude_value_ = 0;
+  float target_frequency_value_ = 0;
 
+  std::string operation_mode_description_ = "Unknown";
   std::string run_state_description_ = "Unknown";
   std::string error_code_description_ = "Unknown";
 
