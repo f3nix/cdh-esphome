@@ -48,7 +48,8 @@ DIAGNOSTIC_SENSORS = [
     "pump_max_limit",
     "fan_min_limit",
     "fan_max_limit",
-    "altitude"
+    "altitude",
+    "target_frequency"
 ]
 
 # CONFIG_SCHEMA = cv.Schema(
