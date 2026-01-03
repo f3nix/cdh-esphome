@@ -43,7 +43,8 @@ CONFIG_SCHEMA = cv.Schema(
             cv.Optional(sensor_key): sensor.sensor_schema(
                 unit_of_measurement=unit,
                 icon=icon,
-                accuracy_decimals=1,
+                accuracy_decimals=0 if sensor_key == "crc_errors" else 1,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC if sensor_key in DIAGNOSTIC_SENSORS else None,
             )
             for sensor_key, (_, unit, icon) in SENSORS.items()
         },
