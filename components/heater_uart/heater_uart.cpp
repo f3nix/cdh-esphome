@@ -78,8 +78,20 @@ void HeaterUart::loop() {
     const int RX_FRAME_START_INDEX = 24;
     const uint8_t END_OF_FRAME_MARKER = 0x00;
 
-    while (available()) {
+    // SAFETY MECHANISMS:
+    // 1. MAX_BYTES_PER_LOOP: Forces a return to let main loop run
+    // 2. yield(): Explicitly feeds WDT every 16 bytes (standard ESP8266 pattern)
+    int bytes_read = 0;
+    const int MAX_BYTES_PER_LOOP = 64;
+
+    while (available() && bytes_read < MAX_BYTES_PER_LOOP) {
         uint8_t byte = read();
+        bytes_read++;
+
+        if ((bytes_read & 0x0F) == 0) {
+            yield();
+        }
+
         if (waiting_for_start_) {
             if (byte == 0x76) {
                 frame_[frame_index_++] = byte;
@@ -91,7 +103,7 @@ void HeaterUart::loop() {
                 if (frame_[21] == END_OF_FRAME_MARKER) {
                     ESP_LOGW("heater_uart", "Invalid Transmit Packet. Resetting frame.");
                     reset_frame();
-                    return;
+                    continue; // Continue reading to clear buffer
                 }
             }
             if (frame_index_ == FRAME_SIZE) {
@@ -176,12 +188,28 @@ void HeaterUart::update() {
         const std::string &key = text_entry.first;
         text_sensor::TextSensor *text_sensor = text_entry.second;
 
-        if (key == "run_state")
-            text_sensor->publish_state(run_state_description_);
-        else if (key == "error_code")
-            text_sensor->publish_state(error_code_description_);
-        else if (key == "operation_mode")
-            text_sensor->publish_state(operation_mode_description_);
+        // Moved string generation here to run only every 5s (prevents Heap Fragmentation)
+        if (key == "run_state") {
+            std::string state = run_state_map.count(run_state_value_)
+            ? run_state_map.at(run_state_value_)
+            : "Unknown Run State";
+            text_sensor->publish_state(state);
+        }
+        else if (key == "error_code") {
+            std::string err = error_code_map.count(error_code_value_)
+            ? error_code_map.at(error_code_value_)
+            : "Unknown Error Code";
+            text_sensor->publish_state(err);
+        }
+        else if (key == "operation_mode") {
+            std::string mode_str = "Unknown";
+            if (operation_mode_code_ == 0x32) {
+                mode_str = "Thermostat";
+            } else if (operation_mode_code_ == 0xCD) {
+                mode_str = "Fixed Hz";
+            }
+            text_sensor->publish_state(mode_str);
+        }
     }
 
     for (const auto &binary_entry : binary_sensors_) {
@@ -211,13 +239,8 @@ void HeaterUart::parse_frame(const uint8_t *frame, size_t length, bool tx_valid)
         fan_max_limit_value_ = (command_frame[9] << 8) | command_frame[10];
         altitude_value_ = (command_frame[20] << 8) | command_frame[21];
 
-        if (command_frame[13] == 0x32) {
-            operation_mode_description_ = "Thermostat";
-        } else if (command_frame[13] == 0xCD) {
-            operation_mode_description_ = "Fixed Hz";
-        } else {
-            operation_mode_description_ = "Unknown";
-        }
+        // Store raw operation mode byte (logic moved to update())
+        operation_mode_code_ = command_frame[13];
     }
 
     // --- Heater Data (Checked by Rx CRC) ---
@@ -233,14 +256,6 @@ void HeaterUart::parse_frame(const uint8_t *frame, size_t length, bool tx_valid)
     run_state_value_ = response_frame[2];
     on_off_value_ = response_frame[3] == 1;
     error_code_value_ = response_frame[17];
-
-    run_state_description_ = run_state_map.count(run_state_value_)
-                                ? run_state_map.at(run_state_value_)
-                                : "Unknown Run State";
-
-    error_code_description_ = error_code_map.count(error_code_value_)
-                                ? error_code_map.at(error_code_value_)
-                                : "Unknown Error Code";
 }
 
 void HeaterUart::reset_frame() {
