@@ -70,6 +70,8 @@ const std::map<int, std::string> HeaterUart::error_code_map = {
 
 void HeaterUart::setup() {
     ESP_LOGCONFIG(TAG, "Setting up Heater UART...");
+    // Initialize to prevent immediate reset on boot
+    last_rx_time_ = millis();
 }
 
 void HeaterUart::loop() {
@@ -78,8 +80,33 @@ void HeaterUart::loop() {
     const int RX_FRAME_START_INDEX = 24;
     const uint8_t END_OF_FRAME_MARKER = 0x00;
 
-    while (available()) {
+    // SAFETY MECHANISMS:
+    // 1. MAX_BYTES_PER_LOOP: Forces a return to let main loop run
+    // 2. yield(): Explicitly feeds WDT every 16 bytes (standard ESP8266 pattern)
+    int bytes_read = 0;
+    const int MAX_BYTES_PER_LOOP = 64;
+
+    // SMART CONDITIONAL GAP RESET
+    // 1. last_rx_time_ != 0: Ensure we have received data at least once.
+    // 2. !waiting_for_start_: Only reset if we are currently confused (mid-frame).
+    // 3. now - last_rx_time_ > 50: The protocol has >100ms gaps between frames.
+    //    If we see >50ms silence while expecting data, we have lost sync.
+    uint32_t now = millis();
+    if (last_rx_time_ != 0 && !waiting_for_start_ && (now - last_rx_time_ > 50)) {
+        reset_frame();
+    }
+
+    while (available() && bytes_read < MAX_BYTES_PER_LOOP) {
         uint8_t byte = read();
+        bytes_read++;
+
+        if ((bytes_read & 0x0F) == 0) {
+            yield();
+        }
+
+        // Update timestamp with FRESH time for every byte
+        last_rx_time_ = millis();
+
         if (waiting_for_start_) {
             if (byte == 0x76) {
                 frame_[frame_index_++] = byte;
@@ -87,13 +114,17 @@ void HeaterUart::loop() {
             }
         } else {
             frame_[frame_index_++] = byte;
-            if (frame_index_ == TX_FRAME_END_INDEX + 1) {
-                if (frame_[21] == END_OF_FRAME_MARKER) {
-                    ESP_LOGW("heater_uart", "Invalid Transmit Packet. Resetting frame.");
-                    reset_frame();
-                    return;
-                }
-            }
+
+            // REMOVED: Invalid check for TX "end of frame" at index 21/24.
+            // Protocol doc says TX bytes 20-21 are Altitude, so byte 21 can be anything.
+            // We only validate TX data via CRC at the end.
+            // if (frame_index_ == TX_FRAME_END_INDEX + 1) {
+            //     if (frame_[21] == END_OF_FRAME_MARKER) {
+            //         // ESP_LOGW("heater_uart", "Invalid Transmit Packet. Resetting frame.");
+            //         reset_frame();
+            //         continue; // Continue reading to clear buffer
+            //     }
+            // }
             if (frame_index_ == FRAME_SIZE) {
                 if (frame_[45] == END_OF_FRAME_MARKER && frame_[RX_FRAME_START_INDEX] == 0x76) {
                     // 1. Calculate CRC for the Heater's Response (Rx Packet)
@@ -114,18 +145,30 @@ void HeaterUart::loop() {
                         // If Tx CRC fails, we log it, but we still parse the Heater (Rx) data
                         // because that is the most important part (Temp, Voltage, Error).
                         if (!tx_valid) {
-                            ESP_LOGW(TAG, "Tx CRC Mismatch (Controller Data)! Calc: 0x%04X, Recv: 0x%04X", tx_calc_crc, tx_recv_crc);
+                            static uint32_t last_tx_log = 0;
+                            if (millis() - last_tx_log > 5000) {
+                                ESP_LOGW(TAG, "Tx CRC Mismatch (Controller Data)! Calc: 0x%04X, Recv: 0x%04X", tx_calc_crc, tx_recv_crc);
+                                last_tx_log = millis();
+                            }
                         }
 
                         // Pass both frame and validity flag to parser
                         parse_frame(frame_, FRAME_SIZE, tx_valid);
                     } else {
                         crc_error_count_value_++;
-                        ESP_LOGW(TAG, "Rx CRC Mismatch (Heater Data)! Calc: 0x%04X, Recv: 0x%04X", rx_calc_crc, rx_recv_crc);
+                        static uint32_t last_rx_log = 0;
+                        if (millis() - last_rx_log > 2000) {
+                            ESP_LOGW(TAG, "Rx CRC Mismatch (Heater Data)! Calc: 0x%04X, Recv: 0x%04X", rx_calc_crc, rx_recv_crc);
+                            last_rx_log = millis();
+                        }
                     }
 
                 } else {
-                    ESP_LOGW("heater_uart", "Invalid Receive Packet or incorrect order. Resetting frame.");
+                    static uint32_t last_frame_log = 0;
+                    if (millis() - last_frame_log > 2000) {
+                        ESP_LOGW("heater_uart", "Invalid Receive Packet or incorrect order. Resetting frame.");
+                        last_frame_log = millis();
+                    }
                 }
                 reset_frame();
             }
@@ -176,12 +219,28 @@ void HeaterUart::update() {
         const std::string &key = text_entry.first;
         text_sensor::TextSensor *text_sensor = text_entry.second;
 
-        if (key == "run_state")
-            text_sensor->publish_state(run_state_description_);
-        else if (key == "error_code")
-            text_sensor->publish_state(error_code_description_);
-        else if (key == "operation_mode")
-            text_sensor->publish_state(operation_mode_description_);
+        // Moved string generation here to run only every 5s (prevents Heap Fragmentation)
+        if (key == "run_state") {
+            std::string state = run_state_map.count(run_state_value_)
+            ? run_state_map.at(run_state_value_)
+            : "Unknown Run State";
+            text_sensor->publish_state(state);
+        }
+        else if (key == "error_code") {
+            std::string err = error_code_map.count(error_code_value_)
+            ? error_code_map.at(error_code_value_)
+            : "Unknown Error Code";
+            text_sensor->publish_state(err);
+        }
+        else if (key == "operation_mode") {
+            std::string mode_str = "Unknown";
+            if (operation_mode_code_ == 0x32) {
+                mode_str = "Thermostat";
+            } else if (operation_mode_code_ == 0xCD) {
+                mode_str = "Fixed Hz";
+            }
+            text_sensor->publish_state(mode_str);
+        }
     }
 
     for (const auto &binary_entry : binary_sensors_) {
@@ -211,13 +270,8 @@ void HeaterUart::parse_frame(const uint8_t *frame, size_t length, bool tx_valid)
         fan_max_limit_value_ = (command_frame[9] << 8) | command_frame[10];
         altitude_value_ = (command_frame[20] << 8) | command_frame[21];
 
-        if (command_frame[13] == 0x32) {
-            operation_mode_description_ = "Thermostat";
-        } else if (command_frame[13] == 0xCD) {
-            operation_mode_description_ = "Fixed Hz";
-        } else {
-            operation_mode_description_ = "Unknown";
-        }
+        // Store raw operation mode byte (logic moved to update())
+        operation_mode_code_ = command_frame[13];
     }
 
     // --- Heater Data (Checked by Rx CRC) ---
@@ -233,14 +287,6 @@ void HeaterUart::parse_frame(const uint8_t *frame, size_t length, bool tx_valid)
     run_state_value_ = response_frame[2];
     on_off_value_ = response_frame[3] == 1;
     error_code_value_ = response_frame[17];
-
-    run_state_description_ = run_state_map.count(run_state_value_)
-                                ? run_state_map.at(run_state_value_)
-                                : "Unknown Run State";
-
-    error_code_description_ = error_code_map.count(error_code_value_)
-                                ? error_code_map.at(error_code_value_)
-                                : "Unknown Error Code";
 }
 
 void HeaterUart::reset_frame() {
